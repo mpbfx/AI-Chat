@@ -2,7 +2,7 @@ import { CoffeeOutlined, LinkOutlined, FireOutlined, SmileOutlined, CloseOutline
 import { Attachments, Prompts, Sender } from '@ant-design/x'
 import { Button, message, Spin, type GetRef } from 'antd'
 import React from 'react'
-import { useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import SparkMD5 from 'spark-md5'
 import type { PromptsProps } from '@ant-design/x'
 
@@ -11,12 +11,15 @@ import {
   getCheckFileAPI,
   postFileChunksAPI,
   postMergeFileAPI,
-  sendChatMessage
+  sendChatMessage,
+  stopChatGeneration
 } from '@pc/apis/chat'
 import { sessionApi } from '@pc/apis/session'
 import { BASE_URL, DEFAULT_MESSAGE } from '@pc/constant'
 import { useChatStore, useConversationStore } from '@pc/store'
 import { isImageByExtension } from '@pc/utils/judgeImage'
+
+import { closeActiveEventSource, stopGeneration as stopStreamGeneration } from './streamControl'
 
 import type { RcFile } from 'antd/es/upload'
 
@@ -49,6 +52,12 @@ const AIRichInput = () => {
   const [showPrompts, setShowPrompts] = useState(true)
   const { messages, addMessage, addChunkMessage } = useChatStore()
   const { selectedId, setSelectedId, addConversation } = useConversationStore()
+
+  useEffect(() => {
+    return () => {
+      closeActiveEventSource(eventSourceRef)
+    }
+  }, [])
 
   // 监听输入值变化
   const handleInputChange = (value: string) => {
@@ -322,6 +331,25 @@ const AIRichInput = () => {
     // })
   }
 
+  const closeCurrentStream = () => {
+    closeActiveEventSource(eventSourceRef)
+  }
+
+  const handleStopGeneration = () => {
+    const chatId = idRef.current || selectedId
+    if (chatId) {
+      void stopChatGeneration(chatId).catch((error) => {
+        console.error('停止生成请求失败:', error)
+      })
+    }
+
+    stopStreamGeneration({
+      eventSourceRef,
+      setInputLoading,
+      notifyStopped: () => message.info('已停止生成')
+    })
+  }
+
   const createSSEAndSendMessage = (
     chatId: string,
     message: string,
@@ -329,9 +357,7 @@ const AIRichInput = () => {
     fileId?: string
   ) => {
     // console.log('images', fileId, images)
-    if (eventSourceRef.current) {
-      eventSourceRef.current.close()
-    }
+    closeCurrentStream()
 
     eventSourceRef.current = createSSE(chatId)
     // eslint-disable-next-line unused-imports/no-unused-vars
@@ -345,9 +371,15 @@ const AIRichInput = () => {
         } else if (data.type === 'complete') {
           content = data.content
           setInputLoading(false)
+          closeCurrentStream()
           content = ''
         } else if (data.type === 'error') {
           console.error('SSE连接错误:', data.error)
+          setInputLoading(false)
+          closeCurrentStream()
+        } else if (data.type === 'stopped') {
+          setInputLoading(false)
+          closeCurrentStream()
         }
       } catch (error) {
         console.log('解析消息失败', error)
@@ -356,8 +388,8 @@ const AIRichInput = () => {
 
     eventSourceRef.current.onerror = (error) => {
       console.error('SSE连接错误:', error)
-      eventSourceRef.current?.close()
-      eventSourceRef.current = null
+      setInputLoading(false)
+      closeCurrentStream()
     }
 
     // sendMessage(chatId, message, images, fileId)
@@ -557,6 +589,14 @@ const AIRichInput = () => {
             <Button type="text" icon={<CloseOutlined />} onClick={() => setShowPrompts(false)} />
           </div>
         </div>)}
+
+        {inputLoading && (
+          <div className="mb-3 flex justify-end">
+            <Button danger size="small" onClick={handleStopGeneration}>
+              停止生成
+            </Button>
+          </div>
+        )}
 
         <Sender
           ref={senderRef}
