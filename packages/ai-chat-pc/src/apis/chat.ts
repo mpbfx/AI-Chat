@@ -41,6 +41,11 @@ export const sendChatMessage = (data: SendMessageType): Promise<Data<object>> =>
   return request('chat/sendMessage', 'POST', data)
 }
 
+// 停止生成
+export const stopChatGeneration = (chatId: string): Promise<Data<{ stopped: boolean }>> => {
+  return request(`chat/stop/${chatId}`, 'POST')
+}
+
 // 建立sse连接
 export const createSSE = (chatId: string) => {
   const { token } = useUserStore.getState()
